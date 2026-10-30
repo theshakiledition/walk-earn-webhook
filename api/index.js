@@ -1,4 +1,3 @@
-const express = require('express');
 const admin = require('firebase-admin');
 
 if (!admin.apps.length) {
@@ -12,9 +11,12 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
-const app = express();
 
-app.get('/api', async (req, res) => {
+const COINS_PER_USD = 10000;
+const HOUSE_PROFIT_CUT = 0.70;
+const MAX_DAILY_AD_CONVERSIONS = 10;
+
+module.exports = async (req, res) => {
   try {
     const { user_id, transaction_id, custom_data } = req.query;
     if (!user_id || !transaction_id) {
@@ -42,7 +44,7 @@ app.get('/api', async (req, res) => {
       const adsWatchedToday = isNewDay ? 0 : (user.ads_watched_today || 0);
       const stepBank = user.step_bank_balance || 0;
 
-      if (adsWatchedToday >= 10 || stepBank <= 0) {
+      if (adsWatchedToday >= MAX_DAILY_AD_CONVERSIONS || stepBank <= 0) {
         t.set(txRef, {
           user_id,
           coins_minted: 0,
@@ -55,12 +57,12 @@ app.get('/api', async (req, res) => {
       }
 
       const verifiedAdRev = Math.max(0.001, Math.min(Number(payload.adRevenueUsd) || 0.020, 0.040));
-      const userShareUsd = verifiedAdRev * (1.0 - 0.70); // 70% House Cut
-      const maxAllowedCoins = Math.max(5, Math.floor(userShareUsd * 10000));
+      const userShareUsd = verifiedAdRev * (1.0 - HOUSE_PROFIT_CUT);
+      const maxAllowedCoins = Math.max(5, Math.floor(userShareUsd * COINS_PER_USD));
 
       const stepsConverted = Math.min(stepBank, maxAllowedCoins);
       const coinsMinted = stepsConverted;
-      const actualUserLiabilityUsd = coinsMinted / 10000;
+      const actualUserLiabilityUsd = coinsMinted / COINS_PER_USD;
       const houseNetProfitUsd = verifiedAdRev - actualUserLiabilityUsd;
 
       t.update(userRef, {
@@ -69,7 +71,7 @@ app.get('/api', async (req, res) => {
         step_bank_balance: stepBank - stepsConverted,
         steps_converted_today: (isNewDay ? 0 : (user.steps_converted_today || 0)) + stepsConverted,
         coin_balance: (user.coin_balance || 0) + coinsMinted,
-        usd_equivalent: Number((((user.coin_balance || 0) + coinsMinted) / 10000).toFixed(4)),
+        usd_equivalent: Number((((user.coin_balance || 0) + coinsMinted) / COINS_PER_USD).toFixed(4)),
         lifetime_revenue_generated_usd: admin.firestore.FieldValue.increment(verifiedAdRev),
         lifetime_house_profit_usd: admin.firestore.FieldValue.increment(houseNetProfitUsd),
         updated_at: admin.firestore.FieldValue.serverTimestamp(),
@@ -92,6 +94,4 @@ app.get('/api', async (req, res) => {
     console.error("Vercel SSV Error:", e);
     return res.status(500).send("Error");
   }
-});
-
-module.exports = app;
+};
